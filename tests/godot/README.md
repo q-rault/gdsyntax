@@ -9,5 +9,5 @@ They are Godot's work, under the MIT license in [LICENSE.txt](LICENSE.txt).
 To add a Godot version, copy its scripts into a new folder:
 
 ```sh
-git -C <godot> archive <tag> modules/gdscript/tests/scripts | tar -x -C crates/gdsyntax/tests/godot/<version> --strip-components=4
+git -C <godot> archive <tag> modules/gdscript/tests/scripts | tar -x -C tests/godot/<version> --strip-components=4
 ```

@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Godot test scripts are kept byte for byte.
+tests/godot/** -text

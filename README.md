@@ -34,4 +34,4 @@ Syntax only. Godot's parser also reports some errors that need scope information
 
 ## License
 
-Licensed under either of [MIT](../../LICENSE-MIT) or [Apache-2.0](../../LICENSE-APACHE), at your option. The tokenizer and parser follow Godot's, which is MIT-licensed ([Godot's license](tests/godot/LICENSE.txt)).
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. The tokenizer and parser follow Godot's, which is MIT-licensed ([Godot's license](tests/godot/LICENSE.txt)).
