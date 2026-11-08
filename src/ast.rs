@@ -26,6 +26,38 @@ pub trait AstNode: Sized {
     fn text(&self) -> String {
         self.syntax().to_string()
     }
+
+    /// The range of the node's code; see [`code_range`].
+    fn code_range(&self) -> Option<rowan::TextRange> {
+        code_range(self.syntax())
+    }
+}
+
+/// Whether a token is code: not trivia, and not one of the line-structure
+/// tokens `NEWLINE`, `INDENT` and `DEDENT`.
+pub fn is_code(token: &SyntaxToken) -> bool {
+    !token.kind().is_trivia() && !matches!(token.kind(), NEWLINE | INDENT | DEDENT)
+}
+
+/// The tokens of `node` that are code (see [`is_code`]), in order.
+pub fn code_tokens(node: &SyntaxNode) -> impl Iterator<Item = SyntaxToken> + use<> {
+    node.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(is_code)
+}
+
+/// The range from the start of the node's first code token to the end of its
+/// last: a node's own range also covers comments, blank lines and line ends
+/// it holds, such as those at the end of a function's body. `None` when the
+/// node has no code, as an empty error node.
+pub fn code_range(node: &SyntaxNode) -> Option<rowan::TextRange> {
+    let mut tokens = code_tokens(node);
+    let first = tokens.next()?;
+    let last = tokens.last().unwrap_or_else(|| first.clone());
+    Some(rowan::TextRange::new(
+        first.text_range().start(),
+        last.text_range().end(),
+    ))
 }
 
 macro_rules! ast_node {
@@ -492,6 +524,33 @@ impl Func {
         child::<ReturnType>(&self.0).and_then(|r| child(&r.0))
     }
 
+    /// The `func` keyword. The node itself starts at its first annotation.
+    pub fn func_token(&self) -> Option<SyntaxToken> {
+        token(&self.0, FUNC_KW)
+    }
+
+    /// The signature, from `func` (or `static`) to the end of the return
+    /// type, without annotations, the `:` or the body. A signature can span
+    /// lines.
+    pub fn signature_range(&self) -> Option<rowan::TextRange> {
+        let start = token(&self.0, STATIC_KW)
+            .or_else(|| self.func_token())?
+            .text_range()
+            .start();
+        let end = self
+            .0
+            .children_with_tokens()
+            .take_while(|element| !matches!(element.kind(), COLON | SUITE | SEMICOLON))
+            .filter_map(|element| match element {
+                rowan::NodeOrToken::Node(node) => code_range(&node).map(|range| range.end()),
+                rowan::NodeOrToken::Token(token) => {
+                    is_code(&token).then(|| token.text_range().end())
+                }
+            })
+            .last()?;
+        Some(rowan::TextRange::new(start, end))
+    }
+
     /// The body; abstract functions have none.
     pub fn body(&self) -> Option<Suite> {
         child(&self.0)
@@ -829,6 +888,21 @@ impl DictPatternEntry {
 impl AssertStmt {
     pub fn arguments(&self) -> Option<ArgList> {
         child(&self.0)
+    }
+
+    /// The `assert` keyword. The node itself starts at its first annotation.
+    pub fn assert_token(&self) -> Option<SyntaxToken> {
+        token(&self.0, ASSERT_KW)
+    }
+
+    /// The asserted condition, the first argument.
+    pub fn condition(&self) -> Option<Expr> {
+        self.arguments()?.arguments().next()
+    }
+
+    /// The optional message, the second argument.
+    pub fn message(&self) -> Option<Expr> {
+        self.arguments()?.arguments().nth(1)
     }
 }
 
@@ -1302,6 +1376,67 @@ mod tests {
         let parse = parser::parse(src);
         assert!(parse.errors.is_empty(), "{:?}", parse.errors);
         SourceFile::cast(SyntaxNode::new_root(parse.green)).unwrap()
+    }
+
+    fn funcs(file: &SourceFile) -> Vec<Func> {
+        file.syntax().descendants().filter_map(Func::cast).collect()
+    }
+
+    fn slice(src: &str, range: rowan::TextRange) -> &str {
+        &src[range]
+    }
+
+    #[test]
+    fn func_keyword_and_signature() {
+        let src =
+            "@warning_ignore(\"x\")\nstatic func f(a: int,\n\t\tb: int) -> int:  # c\n\treturn a\n";
+        let func = funcs(&file(src)).remove(0);
+        let keyword = func.func_token().unwrap();
+        assert_eq!(keyword.text(), "func");
+        assert_eq!(
+            slice(src, func.signature_range().unwrap()),
+            "static func f(a: int,\n\t\tb: int) -> int"
+        );
+    }
+
+    #[test]
+    fn signature_of_abstract_functions() {
+        let src = "@abstract\nclass A:\n\t@abstract func f() -> int;\n\t@abstract func g()\n";
+        let funcs = funcs(&file(src));
+        assert_eq!(
+            slice(src, funcs[0].signature_range().unwrap()),
+            "func f() -> int"
+        );
+        assert_eq!(slice(src, funcs[1].signature_range().unwrap()), "func g()");
+        assert!(funcs[1].body().is_none());
+    }
+
+    #[test]
+    fn code_range_leaves_out_trailing_comments_and_line_ends() {
+        let src = "func f():\n\tvar s = \"\"\"\n\ta\n\t\"\"\"  # end\n\t# trailing\n\n\nvar x\n";
+        let func = funcs(&file(src)).remove(0);
+        let body = func.body().unwrap();
+        assert!(body.text().contains("# trailing"));
+        let code = slice(src, body.code_range().unwrap());
+        assert!(code.starts_with("var s"), "{code:?}");
+        assert!(code.ends_with("\t\"\"\""), "{code:?}");
+        assert_eq!(code_range(func.syntax()).unwrap().start(), 0.into());
+    }
+
+    #[test]
+    fn assert_condition_and_message() {
+        let src = "func f():\n\tassert(a == b, \"m\")\n\tassert(c)\n";
+        let file = file(src);
+        let asserts: Vec<AssertStmt> = file
+            .syntax()
+            .descendants()
+            .filter_map(AssertStmt::cast)
+            .collect();
+        assert!(matches!(asserts[0].condition(), Some(Expr::Binary(_))));
+        assert_eq!(asserts[0].assert_token().unwrap().text(), "assert");
+        assert_eq!(asserts[0].message().unwrap().syntax().to_string(), "\"m\"");
+        assert_eq!(asserts[1].condition().unwrap().syntax().to_string(), "c");
+        assert!(asserts[1].message().is_none());
     }
 
     #[test]

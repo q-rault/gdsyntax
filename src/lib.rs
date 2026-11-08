@@ -26,6 +26,9 @@ pub mod literal;
 pub mod parser;
 
 pub use kind::{GDScript, SyntaxKind};
+/// The tree library, re-exported so that its types (`NodeOrToken`,
+/// `TextRange`, `WalkEvent`...) are the ones this crate's tree uses.
+pub use rowan;
 
 /// A node of a lossless GDScript tree.
 pub type SyntaxNode = rowan::SyntaxNode<GDScript>;
@@ -74,6 +77,41 @@ pub fn parse(source: impl Into<String>) -> SyntaxTree {
         errors: parse.errors,
         source,
         line_starts,
+    }
+}
+
+/// The message Godot gives for a script that is not valid UTF-8.
+pub const INVALID_UTF8_MESSAGE: &str = "Script contains invalid unicode (UTF-8), so it was not loaded. Please ensure that scripts are saved in valid UTF-8 unicode.";
+
+/// Parse a file's bytes. Valid UTF-8 parses as with [`parse`]. Godot does
+/// not load a script that is not valid UTF-8; here each invalid sequence is
+/// replaced with U+FFFD so the rest can still be parsed, and the first error
+/// is Godot's [`INVALID_UTF8_MESSAGE`], at the first invalid byte.
+///
+/// Offsets and positions always refer to [`SyntaxTree::source`]. After a
+/// replacement, offsets past it no longer match the bytes passed in, but
+/// lines do: a line break is never replaced.
+pub fn parse_bytes(bytes: &[u8]) -> SyntaxTree {
+    match std::str::from_utf8(bytes) {
+        Ok(source) => parse(source),
+        Err(error) => {
+            let valid = error.valid_up_to();
+            let mut tree = parse(String::from_utf8_lossy(bytes).into_owned());
+            let end = valid
+                + tree.source[valid..]
+                    .chars()
+                    .next()
+                    .map_or(0, char::len_utf8);
+            tree.errors.insert(
+                0,
+                parser::ParseError {
+                    message: INVALID_UTF8_MESSAGE.to_string(),
+                    start: valid,
+                    end,
+                },
+            );
+            tree
+        }
     }
 }
 
@@ -188,6 +226,37 @@ mod tests {
             );
         }
         assert_eq!(tree.position(usize::MAX), Position { line: 3, column: 1 });
+    }
+
+    #[test]
+    fn bytes_that_are_utf8_parse_as_text() {
+        let source = "func f():\n\tpass\n";
+        let tree = parse_bytes(source.as_bytes());
+        assert!(!tree.has_errors());
+        assert_eq!(tree.source(), source);
+    }
+
+    #[test]
+    fn invalid_utf8_is_godot_s_first_error_and_the_rest_still_parses() {
+        let tree = parse_bytes(b"var a = 1\nvar b = \"\xff\"\nfunc test_x():\n\tpass\n");
+        let errors = tree.errors();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, INVALID_UTF8_MESSAGE);
+        assert_eq!(
+            errors[0].start,
+            Position {
+                line: 2,
+                column: 10
+            }
+        );
+        assert!(tree.source().contains('\u{fffd}'));
+        let names: Vec<String> = tree
+            .file()
+            .members()
+            .filter_map(|member| member.name())
+            .map(|name| name.text().to_string())
+            .collect();
+        assert_eq!(names, ["a", "b", "test_x"]);
     }
 
     #[test]
