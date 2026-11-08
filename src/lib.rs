@@ -56,6 +56,8 @@ pub struct SyntaxTree {
     source: String,
     root: SyntaxNode,
     errors: Vec<parser::ParseError>,
+    /// The byte offset where each line starts; the first is 0.
+    line_starts: Vec<usize>,
 }
 
 /// Parse GDScript source. Parsing never fails: code that is not valid
@@ -64,10 +66,14 @@ pub struct SyntaxTree {
 pub fn parse(source: impl Into<String>) -> SyntaxTree {
     let source = source.into();
     let parse = parser::parse(&source);
+    let line_starts = std::iter::once(0)
+        .chain(source.match_indices('\n').map(|(index, _)| index + 1))
+        .collect();
     SyntaxTree {
         root: SyntaxNode::new_root(parse.green),
         errors: parse.errors,
         source,
+        line_starts,
     }
 }
 
@@ -105,14 +111,20 @@ impl SyntaxTree {
             .collect()
     }
 
-    /// The position of a byte offset in the source.
+    /// The position of a byte offset in the source. An offset past the end
+    /// is the end of the source, and one inside a multi-byte character is
+    /// that character. Finding the line is a binary search, not a scan of
+    /// the file.
     pub fn position(&self, byte: usize) -> Position {
-        let byte = byte.min(self.source.len());
-        let before = &self.source[..byte];
-        let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+        let mut byte = byte.min(self.source.len());
+        while !self.source.is_char_boundary(byte) {
+            byte -= 1;
+        }
+        let line = self.line_starts.partition_point(|&start| start <= byte);
+        let line_start = self.line_starts[line - 1];
         Position {
-            line: before.matches('\n').count() + 1,
-            column: before[line_start..].chars().count() + 1,
+            line,
+            column: self.source[line_start..byte].chars().count() + 1,
         }
     }
 }
@@ -159,6 +171,23 @@ mod tests {
         let byte = tree.source().find('=').unwrap();
         // "var é " is 6 characters but 7 bytes.
         assert_eq!(tree.position(byte), Position { line: 1, column: 7 });
+    }
+
+    #[test]
+    fn an_offset_inside_a_character_is_that_character() {
+        let source = "var a = \"\u{27a1}\"\nvar b\n";
+        let tree = parse(source);
+        let arrow = source.find('\u{27a1}').unwrap();
+        for byte in arrow..arrow + '\u{27a1}'.len_utf8() {
+            assert_eq!(
+                tree.position(byte),
+                Position {
+                    line: 1,
+                    column: 10
+                }
+            );
+        }
+        assert_eq!(tree.position(usize::MAX), Position { line: 3, column: 1 });
     }
 
     #[test]
