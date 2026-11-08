@@ -600,3 +600,36 @@ fn skipped_code_is_kept_in_an_error_node() {
     );
     assert!(matches!(stmts.last(), Some(Stmt::Pass(_))));
 }
+
+/// On every valid script, each function has its `func` keyword and a
+/// signature that starts there (or at `static`), ends with code, and ends
+/// before the body starts.
+#[test]
+fn every_function_has_a_signature_before_its_body() {
+    let mut functions = 0;
+    for (name, source) in scripts() {
+        let tree = gdsyntax::parse(source);
+        if tree.has_errors() {
+            continue;
+        }
+        for func in tree.root().descendants().filter_map(Func::cast) {
+            functions += 1;
+            let keyword = func.func_token().expect("a function has `func`");
+            let range = func.signature_range().expect("a function has a signature");
+            let text = &tree.source()[range];
+            assert!(
+                text.starts_with("func") || text.starts_with("static"),
+                "{name}: {text:?}"
+            );
+            assert!(range.contains(keyword.text_range().start()), "{name}");
+            assert!(
+                !text.ends_with(':') && text.trim_end() == text,
+                "{name}: {text:?}"
+            );
+            if let Some(body) = func.body().and_then(|body| body.code_range()) {
+                assert!(range.end() <= body.start(), "{name}: {text:?}");
+            }
+        }
+    }
+    assert!(functions > 1000, "only {functions} functions");
+}
