@@ -16,7 +16,7 @@ for member in tree.file().members() {
 }
 ```
 
-- `parse` returns the tree and the errors, in the order Godot reports them. Lines and columns are 1-based, and columns count characters, not bytes.
+- `parse` returns the tree and the errors, in the order Godot reports them. Lines and columns are 1-based, and columns count characters, not bytes. `position` and `offset` convert between byte offsets and positions, and `lines`, `line_text` and `line_range` give each line without its line break.
 - `ast` gives typed access to the whole tree: declarations, statements, expressions, match patterns and annotations, with typed operators. Every accessor returns an `Option`, because a file with errors still has a tree; code the parser could not read is kept in `Error` nodes.
 - `literal` decodes literal values the way Godot does: string escapes, raw strings, `&"name"`, `^"path"`, and hexadecimal, binary and `1_000` numbers.
 - The tree is a [`rowan`](https://crates.io/crates/rowan) tree; `gdsyntax::rowan` re-exports the version it uses.

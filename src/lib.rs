@@ -165,6 +165,64 @@ impl SyntaxTree {
             column: self.source[line_start..byte].chars().count() + 1,
         }
     }
+
+    /// The byte offset of a position: the inverse of [`SyntaxTree::position`].
+    /// The column may be one past the line's last character, for the end of
+    /// the line. `None` for a position outside the source.
+    pub fn offset(&self, position: Position) -> Option<usize> {
+        let start = *self.line_starts.get(position.line.checked_sub(1)?)?;
+        // The line up to its `\n`; a `\r` before it counts as a character,
+        // as in `position`.
+        let end = self
+            .line_starts
+            .get(position.line)
+            .map_or(self.source.len(), |next| next - 1);
+        let text = &self.source[start..end];
+        let column = position.column.checked_sub(1)?;
+        if column == text.chars().count() {
+            return Some(start + text.len());
+        }
+        text.char_indices()
+            .nth(column)
+            .map(|(index, _)| start + index)
+    }
+
+    /// How many lines the source has, counted as [`str::lines`] does: a final
+    /// line break does not start another line, and an empty source has none.
+    pub fn line_count(&self) -> usize {
+        let last = self.line_starts.len();
+        if self.line_starts[last - 1] == self.source.len() {
+            last - 1
+        } else {
+            last
+        }
+    }
+
+    /// The byte range of a line (1-based), without its `\n` or `\r\n`.
+    pub fn line_range(&self, line: usize) -> Option<std::ops::Range<usize>> {
+        if line == 0 || line > self.line_count() {
+            return None;
+        }
+        let start = self.line_starts[line - 1];
+        let mut end = self
+            .line_starts
+            .get(line)
+            .map_or(self.source.len(), |next| next - 1);
+        if end > start && self.source.as_bytes()[end - 1] == b'\r' && end < self.source.len() {
+            end -= 1;
+        }
+        Some(start..end)
+    }
+
+    /// The text of a line (1-based), without its `\n` or `\r\n`.
+    pub fn line_text(&self, line: usize) -> Option<&str> {
+        self.line_range(line).map(|range| &self.source[range])
+    }
+
+    /// Every line with its 1-based number, as [`str::lines`] gives them.
+    pub fn lines(&self) -> impl Iterator<Item = (usize, &str)> {
+        (1..=self.line_count()).map(|line| (line, self.line_text(line).unwrap_or("")))
+    }
 }
 
 /// The source as a flat tree of tokens, without parsing: one `SOURCE_FILE`
