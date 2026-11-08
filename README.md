@@ -33,6 +33,10 @@ Syntax only. Godot's parser also reports some errors that need scope information
 - **Typed tree**: on every valid script, every node of the tree is reachable through `ast` alone (`tests/typed_tree.rs`; it also runs on `GDSYNTAX_CORPUS`).
 - **Broken input**: random edits to valid files must never make the parser panic, hang or lose a byte.
 
+## Keeping up with Godot
+
+[`godot.toml`](godot.toml) pins the Godot release gdsyntax follows (now `4.7.2-stable`). `just godot-sync check` fails when the copied test scripts or identifier tables differ from that release, or when a newer stable release changed Godot's tokenizer, parser, identifier tables or test scripts; CI runs it every week. `just godot-sync update` copies a newer release's test scripts and tables, moves the pin, and shows what changed in the files to port.
+
 ## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. The tokenizer and parser follow Godot's, which is MIT-licensed ([Godot's license](tests/godot/LICENSE.txt)).

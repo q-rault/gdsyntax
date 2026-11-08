@@ -1,0 +1,44 @@
+name: godot-sync
+
+# Fails when the Godot test scripts and identifier tables in this repository
+# differ from the Godot tag pinned in godot.toml, or when a newer stable Godot
+# release changed the tokenizer, the parser, the tables or the test scripts.
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  pull_request:
+    paths:
+      - godot.toml
+      - scripts/godot_sync.py
+      - src/lexer/unicode.rs
+      - tests/godot/**
+      - .github/workflows/godot-sync.yml
+  push:
+    branches: [main]
+    paths:
+      - godot.toml
+      - scripts/godot_sync.py
+      - src/lexer/unicode.rs
+      - tests/godot/**
+      - .github/workflows/godot-sync.yml
+  workflow_dispatch:
+    inputs:
+      against:
+        description: Godot tag to compare with (default the latest stable)
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Compare with Godot
+        env:
+          AGAINST: ${{ inputs.against }}
+        run: python scripts/godot_sync.py check ${AGAINST:+--against "$AGAINST"}

@@ -1,0 +1,5 @@
+# The Godot release gdsyntax is translated from: its test scripts are in
+# tests/godot and its identifier tables in src/lexer/unicode.rs.
+# `just godot-sync check` compares them, and the files the tokenizer and
+# parser are translated from, with the latest Godot release.
+tag = "4.7.2-stable"
